@@ -24,6 +24,8 @@
 #include <sys/types.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
 #endif
 #include <map>							// Error enum to strings.
 #include <string>						// Strings
@@ -85,12 +87,12 @@ namespace Essentials
 		public:
 			WOL_Client();
 			~WOL_Client();
-			int8_t Send(const std::string& macAddress);
+			int8_t		Send(const std::string& macAddress);
 			std::string GetMacAddressFromArpTable(const std::string& ipAddress);
 		protected:
 		private:
-			void GenerateMagicPacket(const std::string& macAddress, std::vector<uint8_t>& magicPacket);
-			void SendPacket(const std::vector<uint8_t>& packet);
+			int8_t		GenerateMagicPacket(const std::string& macAddress, std::vector<uint8_t>& magicPacket);
+			int8_t		SendPacket(const std::vector<uint8_t>& packet);
 			std::string FormatMacAddress(const std::vector<uint8_t>& macBytes);
 
 			Endpoint* mBroadcastAddress;

@@ -18,6 +18,7 @@ int main()
 
 	if (wol.SendMagicPacket(mac) < 0)
 	{
+		std::cout << wol.GetLastError();
 		std::cout << "Sending Magic Packet Failed!\n";
 	}
 	else

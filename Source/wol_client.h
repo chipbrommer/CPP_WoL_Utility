@@ -68,6 +68,8 @@ namespace Essentials
 		{
 			NONE,
 			ADDRESS_NOT_SUPPORTED,
+			SEND_MAGIC_PACKET_FAIL,
+			CREATE_SOCKET_FAILURE,
 		};
 
 		/// <summary>Error enum to string map</summary>
@@ -77,6 +79,8 @@ namespace Essentials
 			std::string("Error Code " + std::to_string((uint8_t)WolClientError::NONE) + ": No error.")},
 			{WolClientError::ADDRESS_NOT_SUPPORTED,
 			std::string("Error Code " + std::to_string((uint8_t)WolClientError::ADDRESS_NOT_SUPPORTED) + ": Address not supported.")},
+			{WolClientError::SEND_MAGIC_PACKET_FAIL,
+			std::string("Error Code " + std::to_string((uint8_t)WolClientError::SEND_MAGIC_PACKET_FAIL) + ": Failed to send magic packet.")},
 		};
 
 		/// <summary>Structure for the WoL Magic packet</summary>
@@ -113,9 +117,11 @@ namespace Essentials
 			~WOL_Client();
 			std::string GetMacAddressFromArpTable(const std::string& ipAddress, const std::string& ethDevice);
 			int8_t		SendMagicPacket(const std::string& macAddress);
+			std::string GetLastError();
 		protected:
 		private:
 			WolClientError	mLastError;
+			std::string		mLastOSError;
         };
     }
 }

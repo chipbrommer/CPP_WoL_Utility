@@ -25,7 +25,8 @@ namespace Essentials
     {
         WOL_Client::WOL_Client()
         {
-            mLastError = WolClientError::NONE;
+            mLastError      = WolClientError::NONE;
+            mLastOSError    = "";
         }
 
         WOL_Client::~WOL_Client()
@@ -45,7 +46,6 @@ namespace Essentials
                 mLastError = WolClientError::ADDRESS_NOT_SUPPORTED;
             }
 
-
             uint8_t macAddr[6] = {};
             ULONG macAddrLen = 6;
             DWORD retValue = SendARP(destIp, 0, macAddr, &macAddrLen);
@@ -62,8 +62,6 @@ namespace Essentials
 #else
             ifreq ifr {};
             int sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-
 
             strncpy(ifr.ifr_name, ethDevice.c_str(), IFNAMSIZ);
 
@@ -97,14 +95,16 @@ namespace Essentials
             }
 
             SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            if (sock == INVALID_SOCKET) {
+            if (sock == INVALID_SOCKET) 
+            {
                 std::cerr << "Failed to create socket\n";
                 WSACleanup();
                 return -1;
             }
 #else
             int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            if (sock < 0) {
+            if (sock < 0) 
+            {
                 std::cerr << "Failed to create socket\n";
                 return -1;
             }
@@ -127,25 +127,8 @@ namespace Essentials
 
             if (bytesSent <= 0) 
             {
-#ifdef WIN32
-                wchar_t* s = NULL;
-                FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                    NULL, WSAGetLastError(),
-                    MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                    (LPWSTR)&s, 0, NULL);
-                fprintf(stderr, "%S\n", s);
-                LocalFree(s);
-#else
-                std::cout << strerror(errno);
-#endif
-                std::cerr << "Failed to send the magic packet\n";
+                mLastError = WolClientError::SEND_MAGIC_PACKET_FAIL;
                 rtn = -1;
-
-            }
-            else 
-            {
-                std::cout << "Magic packet sent successfully\n";
-                rtn = 0;
             }
 
 #ifdef WIN32
@@ -157,5 +140,14 @@ namespace Essentials
             return rtn;
         }
 
+        std::string WOL_Client::GetLastError()
+        {
+            if (mLastError == WolClientError::SEND_MAGIC_PACKET_FAIL)
+            {
+                return WolClientErrorMap[mLastError] + "\n" + mLastOSError;
+            }
+
+            return WolClientErrorMap[mLastError];
+        }
     }
 }

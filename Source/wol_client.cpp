@@ -25,7 +25,7 @@ namespace Essentials
     {
         WOL_Client::WOL_Client()
         {
-            mBroadcastAddress = {};
+            mLastError = WolClientError::NONE;
         }
 
         WOL_Client::~WOL_Client()
@@ -33,174 +33,128 @@ namespace Essentials
 
         }
 
-        int8_t WOL_Client::Send(const std::string& macAddress)
+        std::string WOL_Client::GetMacAddressFromArpTable(const std::string& ipAddress, const std::string& ethDevice)
         {
-            std::vector<uint8_t> magicPacket;
-            if (GenerateMagicPacket(macAddress, magicPacket) < 0)
+            std::string macAddress = "";
+
+#ifdef _WIN32
+            IPAddr destIp = {};
+
+            if (inet_pton(AF_INET, ipAddress.c_str(), &(destIp)) <= 0)
             {
-                return -1;
+                mLastError = WolClientError::ADDRESS_NOT_SUPPORTED;
             }
 
-            if (SendPacket(magicPacket) < 0)
+
+            uint8_t macAddr[6] = {};
+            ULONG macAddrLen = 6;
+            DWORD retValue = SendARP(destIp, 0, macAddr, &macAddrLen);
+
+            if (retValue == NO_ERROR) 
             {
-                return -1;
+                char macAddressStr[18] = { 0 };
+
+                snprintf(macAddressStr, sizeof(macAddressStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+                            macAddr[0], macAddr[1], macAddr[2], macAddr[3], macAddr[4], macAddr[5]);
+
+                macAddress = macAddressStr;
             }
+#else
+            ifreq ifr {};
+            int sock = socket(AF_INET, SOCK_DGRAM, 0);
 
-            return 0;
-        }
 
-        std::string WOL_Client::GetMacAddressFromArpTable(const std::string& ipAddress)
-        {
-            std::string macAddress;
 
-            // Open a socket to access ARP table
-            int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-            if (sockfd == -1) 
+            strncpy(ifr.ifr_name, ethDevice.c_str(), IFNAMSIZ);
+
+            if (ioctl(sock, SIOCGIFHWADDR, &ifr) != -1) 
             {
-                std::cerr << "Error creating socket: " << strerror(errno) << std::endl;
-                return macAddress;
+                char macAddressStr[18] = { 0 };
+
+                sprintf(macAddressStr, "%02X:%02X:%02X:%02X:%02X:%02X",
+                    (unsigned char)ifr.ifr_hwaddr.sa_data[0],
+                    (unsigned char)ifr.ifr_hwaddr.sa_data[1],
+                    (unsigned char)ifr.ifr_hwaddr.sa_data[2],
+                    (unsigned char)ifr.ifr_hwaddr.sa_data[3],
+                    (unsigned char)ifr.ifr_hwaddr.sa_data[4],
+                    (unsigned char)ifr.ifr_hwaddr.sa_data[5]);
+
+                macAddress = macAddressStr;
             }
+            close(sock);
+#endif
 
-            // Get network interfaces
-            struct ifaddrs* ifAddrList;
-            if (getifaddrs(&ifAddrList) == -1) 
-            {
-                std::cerr << "Error getting network interfaces: " << strerror(errno) << std::endl;
-                close(sockfd);
-                return macAddress;
-            }
-
-            // Iterate through the network interfaces
-            struct ifaddrs* ifAddr;
-            for (ifAddr = ifAddrList; ifAddr != nullptr; ifAddr = ifAddr->ifa_next) 
-            {
-                if (ifAddr->ifa_addr == nullptr)
-                {
-                    continue;
-                }
-
-                // Check if it's an IPv4 interface and matches the broadcast address
-                if (ifAddr->ifa_addr->sa_family == AF_INET) 
-                {
-                    struct sockaddr_in* addr = reinterpret_cast<struct sockaddr_in*>(ifAddr->ifa_addr);
-
-                    if (inet_ntoa(addr->sin_addr) == mBroadcastAddress->ipAddress) 
-                    {
-                        // Read ARP table entries
-                        arpreq arp;
-                        memset(&arp, 0, sizeof(arp));
-                        arp.arp_pa.sa_family = AF_INET;
-                        inet_pton(AF_INET, ipAddress.c_str(), &(arp.arp_pa.sa_data[2]));
-
-                        if (ioctl(sockfd, SIOCGARP, &arp) == 0) 
-                        {
-                            std::stringstream ss;
-                            ss << std::hex << std::setfill('0');
-
-                            for (int i = 0; i < 6; ++i) 
-                            {
-                                ss << std::setw(2) << static_cast<int>(static_cast<uint8_t>(arp.arp_ha.sa_data[i]));
-                                if (i < 5) ss << ":";
-                            }
-
-                            macAddress = ss.str();
-                        }
-
-                        break;
-                    }
-                }
-            }
-
-            freeifaddrs(ifAddrList);
-            close(sockfd);
             return macAddress;
         }
 
-        int8_t WOL_Client::GenerateMagicPacket(const std::string& macAddress, std::vector<uint8_t>& magicPacket)
+        int8_t WOL_Client::SendMagicPacket(const std::string& macAddress)
         {
-            std::stringstream ss(macAddress);
-            std::vector<uint8_t> macBytes;
-
-            // Parse the MAC address into individual bytes
-            for (int i= 0; i < 6; ++i) 
-            {
-                unsigned int byte;
-                ss >> std::hex >> byte;
-                macBytes.push_back(static_cast<uint8_t>(byte));
-
-                if (i < 5)
-                {
-                    ss.ignore(1, ':');
-                }
-            }
-
-            // Build the magic packet
-            magicPacket.clear();
-            magicPacket.resize(6, 0xFF); // Add 6 bytes of 0xFF as the sync stream
-
-            for (int i = 0; i < 16; ++i) 
-            {
-                magicPacket.insert(magicPacket.end(), macBytes.begin(), macBytes.end());
-            }
-        }
-
-        int8_t WOL_Client::SendPacket(const std::vector<uint8_t>& packet)
-        {
-            int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-            if (sockfd == -1) 
-            {
-                std::cerr << "Error creating socket: " << strerror(errno) << std::endl;
+#ifdef WIN32
+            WSADATA wsaData;
+            if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+                std::cerr << "Failed to initialize Winsock\n";
                 return -1;
             }
 
-            int broadcastEnable = 1;
-            if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable)) == -1) 
-            {
-                std::cerr << "Error setting socket options: " << strerror(errno) << std::endl;
-                close(sockfd);
+            SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock == INVALID_SOCKET) {
+                std::cerr << "Failed to create socket\n";
+                WSACleanup();
                 return -1;
             }
-
-            struct sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_port = htons(9); // Wake-on-LAN uses port 9
-
-            if (inet_aton(mBroadcastAddress->ipAddress.c_str(), &addr.sin_addr) == 0) 
-            {
-                std::cerr << "Invalid broadcast address: " << mBroadcastAddress->ipAddress << std::endl;
-                close(sockfd);
+#else
+            int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock < 0) {
+                std::cerr << "Failed to create socket\n";
                 return -1;
             }
+#endif
 
-            ssize_t bytesSent = sendto(sockfd, packet.data(), packet.size(), 0, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
-            if (bytesSent == -1) 
+            MagicPacket magicPacket(macAddress);
+
+            // Set up the broadcast address
+            sockaddr_in broadcastAddr{};
+            memset(&broadcastAddr, 0, sizeof(broadcastAddr));
+            broadcastAddr.sin_family = AF_INET;
+            broadcastAddr.sin_port = htons(9);
+            broadcastAddr.sin_addr.s_addr = INADDR_BROADCAST;
+
+            // Send the magic packet
+            int bytesSent = sendto(sock, reinterpret_cast<const char*>(magicPacket.data.data()), magicPacket.data.size(), 0,
+                reinterpret_cast<sockaddr*>(&broadcastAddr), sizeof(broadcastAddr));
+
+            int rtn = 0;
+
+            if (bytesSent <= 0) 
             {
-                std::cerr << "Error sending packet: " << strerror(errno) << std::endl;
-                close(sockfd);
-                return -1;
+#ifdef WIN32
+                wchar_t* s = NULL;
+                FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                    NULL, WSAGetLastError(),
+                    MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                    (LPWSTR)&s, 0, NULL);
+                fprintf(stderr, "%S\n", s);
+                LocalFree(s);
+#else
+                std::cout << strerror(errno);
+#endif
+                std::cerr << "Failed to send the magic packet\n";
+                rtn = -1;
+
+            }
+            else 
+            {
+                std::cout << "Magic packet sent successfully\n";
+                rtn = 0;
             }
 
-            std::cout << "WoL packet sent successfully to MAC address: " << FormatMacAddress(packet) << std::endl;
-            close(sockfd);
-            return 0;
-        }
-
-        std::string WOL_Client::FormatMacAddress(const std::vector<uint8_t>& macBytes)
-        {
-            std::stringstream ss;
-            ss << std::uppercase << std::setfill('0') << std::hex;
-
-            for (size_t i = 0; i < macBytes.size(); ++i) 
-            {
-                ss << std::setw(2) << static_cast<int>(macBytes[i]);
-
-                if (i < macBytes.size() - 1)
-                {
-                    ss << ":";
-                }
-            }
-            return ss.str();
+#ifdef WIN32
+            closesocket(sock);
+            WSACleanup();
+#else
+            close(sock);
+#endif
+            return rtn;
         }
 
     }
